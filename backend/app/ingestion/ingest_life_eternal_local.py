@@ -3,9 +3,8 @@ import uuid
 from typing import List, Dict
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import VectorParams, PointStruct
+from qdrant_client.models import PointStruct
 from sentence_transformers import SentenceTransformer
-
 
 # =============================
 # CONFIG
@@ -15,15 +14,11 @@ QDRANT_PORT = 6333
 
 COLLECTION_NAME = "life_eternal_collection"
 
-# Local embedding model (same as God Speaks for consistency)
 EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
-VECTOR_SIZE = 384
 
 INPUT_FILE = (
-    "/home/coffeee/Desktop/project/Anuvada_AI/backend/data/normalized/"
-    "life_eternal_normalized_chunks.json"
+    "/home/coffeee/Desktop/project/Anuvada_AI/backend/data/normalized/life_eternal_normalized_chunks.json"
 )
-
 
 # =============================
 # LOAD MODEL & CLIENT
@@ -35,9 +30,7 @@ print("🗄️ Connecting to Qdrant...")
 qdrant = QdrantClient(
     host=QDRANT_HOST,
     port=QDRANT_PORT,
-    check_compatibility=False
 )
-
 
 # =============================
 # HELPERS
@@ -47,7 +40,7 @@ def load_chunks(path: str) -> List[Dict]:
         data = json.load(f)
 
     if not isinstance(data, list):
-        raise ValueError("Life Eternal normalized file must contain a list")
+        raise ValueError("Normalized file must contain a list")
 
     return data
 
@@ -55,30 +48,11 @@ def load_chunks(path: str) -> List[Dict]:
 def embed_text(text: str) -> List[float]:
     return embedder.encode(text).tolist()
 
-
-# =============================
-# COLLECTION SETUP
-# =============================
-def reset_collection():
-    if qdrant.collection_exists(COLLECTION_NAME):
-        print("🗑️ Deleting existing collection")
-        qdrant.delete_collection(COLLECTION_NAME)
-
-    print("📦 Creating collection:", COLLECTION_NAME)
-    qdrant.create_collection(
-        collection_name=COLLECTION_NAME,
-        vectors_config=VectorParams(
-            size=VECTOR_SIZE,
-            distance="Cosine"
-        )
-    )
-
-
 # =============================
 # INGESTION
 # =============================
 def ingest_chunks(chunks: List[Dict]):
-    print(f"🔢 Ingesting {len(chunks)} Life Eternal chunks")
+    print(f"🔢 Ingesting {len(chunks)} chunks into Qdrant")
 
     points = []
 
@@ -89,20 +63,18 @@ def ingest_chunks(chunks: List[Dict]):
 
         points.append(
             PointStruct(
-                id=str(uuid.uuid4()),  # Qdrant-safe ID
+                id=str(uuid.uuid4()),
                 vector=vector,
                 payload={
-                    # Preserve original semantic ID
                     "chunk_id": chunk["id"],
-
-                    "book": chunk["book"],  # "Life Eternal"
-                    "topic": chunk["topic"],
+                    "book": chunk["book"],
+                    "part": chunk["part"],
+                    "chapter": chunk["chapter"],
                     "sub_topic": chunk["sub_topic"],
                     "chunk_type": chunk["chunk_type"],
-                    "page_range": chunk.get("page_range"),
-
-                    # Text for quoting
-                    "text": chunk["text"]
+                    "page_range": chunk["page_range"],
+                    "text": chunk["text"],
+                    "speaker": "Meher Baba"  # 🔑 IMPORTANT for ranking
                 }
             )
         )
@@ -112,35 +84,26 @@ def ingest_chunks(chunks: List[Dict]):
         points=points
     )
 
-    print(f"✅ Inserted {len(points)} Life Eternal chunks")
-
+    print(f"✅ Inserted {len(points)} chunks")
 
 # =============================
 # VERIFY
 # =============================
 def verify_count(expected: int):
     info = qdrant.get_collection(COLLECTION_NAME)
-    stored = info.points_count
-
-    print(f"📊 Qdrant contains {stored} vectors")
-
-    if stored != expected:
-        print("⚠️ WARNING: Vector count mismatch")
-    else:
-        print("✅ Vector count verified")
-
+    print(f"📊 Stored vectors: {info.points_count}")
+    print(f"📈 Indexed vectors: {info.indexed_vectors_count}")
 
 # =============================
 # ENTRY POINT
 # =============================
 if __name__ == "__main__":
-    print("\n🚀 Starting LOCAL Life Eternal ingestion")
+    print("\n🚀 Starting God Speaks ingestion")
 
     chunks = load_chunks(INPUT_FILE)
-    print(f"📥 Loaded {len(chunks)} normalized Life Eternal chunks")
+    print(f"📥 Loaded {len(chunks)} chunks")
 
-    reset_collection()
     ingest_chunks(chunks)
     verify_count(len(chunks))
 
-    print("\n🎉 DONE — Life Eternal successfully ingested")
+    print("\n🎉 DONE — God Speaks ingestion complete")

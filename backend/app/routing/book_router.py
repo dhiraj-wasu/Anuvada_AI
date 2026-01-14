@@ -11,7 +11,7 @@ from google import genai
 
 # Models (override from env if you want)
 OPENAI_ROUTER_MODEL = os.getenv("OPENAI_ROUTER_MODEL", "gpt-4o-mini")
-GEMINI_ROUTER_MODEL = os.getenv("GEMINI_ROUTER_MODEL", "gemini-flash-latest")
+GEMINI_ROUTER_MODEL = os.getenv("GEMINI_ROUTER_MODEL", "models/gemini-2.0-flash")
 
 
 # ---------------- SYSTEM PROMPT (Router Instructions) ----------------
@@ -158,26 +158,26 @@ def run_router_llm(question: str) -> str:
 
     user_message = f"User question:\n{question}\n"
 
-    # ---------------- 1) OpenAI ----------------
-    if openai_key:
-        try:
-            client = OpenAI(api_key=openai_key)
+    # # ---------------- 1) OpenAI ----------------
+    # if openai_key:
+    #     try:
+    #         client = OpenAI(api_key=openai_key)
 
-            resp = client.responses.create(
-                model=OPENAI_ROUTER_MODEL,
-                input=[
-                    {"role": "system", "content": SYSTEM_MESSAGE},
-                    {"role": "user", "content": user_message},
-                ],
-                temperature=0.0,
-            )
+    #         resp = client.responses.create(
+    #             model=OPENAI_ROUTER_MODEL,
+    #             input=[
+    #                 {"role": "system", "content": SYSTEM_MESSAGE},
+    #                 {"role": "user", "content": user_message},
+    #             ],
+    #             temperature=0.0,
+    #         )
 
-            return resp.output_text.strip()
+    #         return resp.output_text.strip()
 
-        except (RateLimitError, APIError, APITimeoutError, APIConnectionError) as e:
-            openai_err = e
-        except Exception as e:
-            openai_err = e
+    #     except (RateLimitError, APIError, APITimeoutError, APIConnectionError) as e:
+    #         openai_err = e
+    #     except Exception as e:
+    #         openai_err = e
 
     # ---------------- 2) Gemini fallback ----------------
     if gemini_key:

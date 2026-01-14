@@ -4,34 +4,38 @@ from qdrant_client import QdrantClient
 from app.config import QDRANT_HOST, QDRANT_PORT
 from app.retrieval.embedding import embed
 
-# -------------------------------------------------
-# Qdrant client
-# -------------------------------------------------
+
+# =================================================
+# QDRANT CLIENT
+# =================================================
 
 qdrant = QdrantClient(
     host=QDRANT_HOST,
-    port=QDRANT_PORT,
-    check_compatibility=False  # avoid client/server version warnings
+    port=QDRANT_PORT
 )
 
-# -------------------------------------------------
-# Book → Collection mapping (AUTHORITATIVE)
-# -------------------------------------------------
+
+# =================================================
+# BOOK → COLLECTION MAP (AUTHORITATIVE)
+# =================================================
 
 BOOK_COLLECTION_MAP = {
     "God Speaks": "god_speaks_collection",
     "Life Eternal": "life_eternal_collection",
 }
 
-# -------------------------------------------------
-# Keyword fallback (NO embeddings)
-# -------------------------------------------------
+
+# =================================================
+# KEYWORD FALLBACK (NO VECTORS)
+# =================================================
 
 def keyword_fallback(book: str, query: str, limit: int = 5) -> List[dict]:
     """
-    Simple keyword-based fallback retrieval.
-    Used only if vector search fails.
+    Fallback retrieval when vector search fails.
+    Simple keyword matching on stored text.
+    ALWAYS returns List[dict].
     """
+
     collection = BOOK_COLLECTION_MAP.get(book)
     if not collection:
         return []
@@ -43,22 +47,21 @@ def keyword_fallback(book: str, query: str, limit: int = 5) -> List[dict]:
     )
 
     query_terms = query.lower().split()
-    scored = []
+    results: List[dict] = []
 
     for p in points:
         payload = p.payload or {}
         text = payload.get("text", "").lower()
 
-        score = sum(1 for term in query_terms if term in text)
-        if score > 0:
-            scored.append((score, payload))
+        if any(term in text for term in query_terms):
+            results.append(payload)
 
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [payload for _, payload in scored[:limit]]
+    return results[:limit]
 
-# -------------------------------------------------
-# MAIN RETRIEVER (VECTOR + FALLBACK)
-# -------------------------------------------------
+
+# =================================================
+# MAIN RETRIEVER (VECTOR → FALLBACK)
+# =================================================
 
 def retrieve(
     book: str,
@@ -67,21 +70,26 @@ def retrieve(
     threshold: float = 0.2
 ) -> List[dict]:
     """
-    Retrieve relevant chunks for a given book and query.
-    Uses SentenceTransformer embeddings + Qdrant vector search.
-    Falls back to keyword search if vector search fails.
+    Retrieve relevant chunks for a given book & query.
+
+    1. Vector search using local embeddings
+    2. Rank results
+    3. Fallback to keyword search if vector fails
+
+    RETURNS:
+    - List[dict] payloads ONLY
     """
 
     collection = BOOK_COLLECTION_MAP.get(book)
     if not collection:
         return []
 
-    # Generate embedding locally (SentenceTransformer)
+    # Local embedding
     vector = embed(query)
 
     try:
-        # ✅ CORRECT Qdrant API (query_points + query)
-        results = qdrant.query_points(
+        # 🔑 CORRECT QDRANT API FOR v1.9+
+        response = qdrant.query_points(
             collection_name=collection,
             query=vector,
             limit=top_k * 2,
@@ -89,19 +97,21 @@ def retrieve(
             with_payload=True
         )
 
+        results = response.points
         ranked = []
 
         for r in results:
             payload = r.payload or {}
 
-            # Base similarity score
+            # Base similarity
             score = 0.6 * r.score
 
-            # Topic boost
-            if payload.get("topic", "").lower() in query.lower():
+            # Topic boost (Life Eternal)
+            topic = payload.get("topic", "")
+            if topic and topic.lower() in query.lower():
                 score += 0.2
 
-            # Meher Baba quote boost
+            # Speaker boost (if present)
             if payload.get("speaker") == "Meher Baba":
                 score += 0.2
 
