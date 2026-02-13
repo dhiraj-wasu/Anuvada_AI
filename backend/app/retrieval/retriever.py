@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from qdrant_client import QdrantClient
 
 from app.config import QDRANT_HOST, QDRANT_PORT
@@ -16,7 +16,7 @@ qdrant = QdrantClient(
 
 
 # =================================================
-# BOOK → COLLECTION MAP (AUTHORITATIVE)
+# BOOK → COLLECTION MAP
 # =================================================
 
 BOOK_COLLECTION_MAP = {
@@ -26,15 +26,10 @@ BOOK_COLLECTION_MAP = {
 
 
 # =================================================
-# KEYWORD FALLBACK (NO VECTORS)
+# KEYWORD FALLBACK
 # =================================================
 
 def keyword_fallback(book: str, query: str, limit: int = 5) -> List[dict]:
-    """
-    Fallback retrieval when vector search fails.
-    Simple keyword matching on stored text.
-    ALWAYS returns List[dict].
-    """
 
     collection = BOOK_COLLECTION_MAP.get(book)
     if not collection:
@@ -60,39 +55,46 @@ def keyword_fallback(book: str, query: str, limit: int = 5) -> List[dict]:
 
 
 # =================================================
-# MAIN RETRIEVER (VECTOR → FALLBACK)
+# MAIN RETRIEVER (HYBRID READY)
 # =================================================
 
 def retrieve(
     book: str,
     query: str,
+    router_topics: Optional[List[str]] = None,
+    router_keywords: Optional[List[str]] = None,
     top_k: int = 6,
     threshold: float = 0.2
 ) -> List[dict]:
-    """
-    Retrieve relevant chunks for a given book & query.
-
-    1. Vector search using local embeddings
-    2. Rank results
-    3. Fallback to keyword search if vector fails
-
-    RETURNS:
-    - List[dict] payloads ONLY
-    """
 
     collection = BOOK_COLLECTION_MAP.get(book)
     if not collection:
         return []
 
-    # Local embedding
-    vector = embed(query)
+    router_topics = router_topics or []
+    router_keywords = router_keywords or []
+
+    enhanced_query = query
+
+    if router_topics or router_keywords:
+        enhanced_query = (
+            query
+            + " "
+            + " ".join(router_topics)
+            + " "
+            + " ".join(router_keywords)
+        )
+
+    print("\n🔎 Enhanced Query Used For Embedding:")
+    print(enhanced_query)
+
+    vector = embed(enhanced_query)
 
     try:
-        # 🔑 CORRECT QDRANT API FOR v1.9+
         response = qdrant.query_points(
             collection_name=collection,
             query=vector,
-            limit=top_k * 2,
+            limit=top_k * 3,
             score_threshold=threshold,
             with_payload=True
         )
@@ -100,24 +102,45 @@ def retrieve(
         results = response.points
         ranked = []
 
+        print("\n📦 RAW RESULTS FROM QDRANT:")
+        print(f"Total returned: {len(results)}\n")
+
         for r in results:
             payload = r.payload or {}
-
-            # Base similarity
             score = 0.6 * r.score
 
-            # Topic boost (Life Eternal)
-            topic = payload.get("topic", "")
-            if topic and topic.lower() in query.lower():
-                score += 0.2
+            payload_topic = payload.get("topic", "").lower()
 
-            # Speaker boost (if present)
+            for topic in router_topics:
+                if topic.lower() in payload_topic:
+                    score += 0.25
+
+            text = payload.get("text", "").lower()
+
+            for keyword in router_keywords:
+                if keyword.lower() in text:
+                    score += 0.15
+
             if payload.get("speaker") == "Meher Baba":
-                score += 0.2
+                score += 0.1
+
+            # 🔥 DEBUG PRINT
+            print("--------------------------------------------------")
+            print("Vector Score:", round(r.score, 4))
+            print("Final Score:", round(score, 4))
+            print("Chunk ID:", payload.get("chunk_id"))
+            print("Topic:", payload.get("topic"))
+            print("Preview:", payload.get("text", "")[:200], "...")
+            print("--------------------------------------------------\n")
 
             ranked.append((score, payload))
 
         ranked.sort(key=lambda x: x[0], reverse=True)
+
+        print("\n🏆 FINAL TOP RANKED CHUNKS:")
+        for i, (score, payload) in enumerate(ranked[:top_k], 1):
+            print(f"{i}. {payload.get('chunk_id')} | Score: {round(score, 4)}")
+
         return [payload for _, payload in ranked[:top_k]]
 
     except Exception as e:

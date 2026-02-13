@@ -2,20 +2,16 @@
 
 import os
 from typing import Optional
-
-from openai import OpenAI
-from openai import RateLimitError, APIError, APITimeoutError, APIConnectionError
-
 from google import genai
 
 
 # Models (override from env if you want)
-OPENAI_ROUTER_MODEL = os.getenv("OPENAI_ROUTER_MODEL", "gpt-4o-mini")
+# OPENAI_ROUTER_MODEL = os.getenv("OPENAI_ROUTER_MODEL", "gpt-4o-mini")
 GEMINI_ROUTER_MODEL = os.getenv("GEMINI_ROUTER_MODEL", "models/gemini-2.0-flash")
 
 
 # ---------------- SYSTEM PROMPT (Router Instructions) ----------------
-SYSTEM_MESSAGE = """
+SYSTEM_MESSAGE  = """
 You are an expert librarian + router for Meher Baba books.
 
 Your job:
@@ -140,65 +136,103 @@ If user asks deep “life conduct + structured essays”
 =========================
 OUTPUT FORMAT
 =========================
-just book name as string, no extra text.
-book == "God Speaks" or "Life Eternal"
-""".strip()
+give ouput in this JSON format, strictly:
+{
+  "book": "",
+  "topics": [],
+  "keywords": []
+}
 
+give only the JSON as output, no explanations, no extra text.
+stictly follow the format, and ensure the output is valid JSON.
+"""
+
+import os
+from typing import Optional
+import requests
+from google import genai
+
+from app.config import (
+    LOCAL_LLM_ENABLED,
+    GEMINI_ENABLED,
+    OLLAMA_BASE_URL,
+    OLLAMA_MODEL,
+    GEMINI_MODEL,
+)
+
+
+
+# -------------------------------------------------
+# LOCAL OLLAMA CALL
+# -------------------------------------------------
+
+import requests
+
+def call_ollama(user_prompt: str) -> str:
+    payload = {
+        "model": "llama3:8b",
+        "messages": [
+            {"role": "system", "content": SYSTEM_MESSAGE},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": 0.0,
+        "stream": False   # 🔑 THIS FIXES YOUR ERROR
+    }
+    print("📡 Sending request to local Ollama router...")
+    r = requests.post(
+        "http://localhost:11434/api/chat",
+        json=payload,
+        timeout=60
+    )
+
+    r.raise_for_status()
+
+    data = r.json()   # now safe
+
+    return data["message"]["content"].strip()
+
+
+# -------------------------------------------------
+# GEMINI CALL
+# -------------------------------------------------
+
+def call_gemini(prompt: str) -> str:
+    try:
+        gclient = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+        resp = gclient.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=SYSTEM_MESSAGE + "\n\n" + prompt
+        )
+
+        return (resp.text or "").strip()
+
+    except Exception as e:
+        print("⚠️ Gemini router failed:", e)
+        raise
+
+
+# -------------------------------------------------
+# FINAL ROUTER
+# -------------------------------------------------
 
 def run_router_llm(question: str) -> str:
-    """
-    Routes question to the best book.
-    Tries OpenAI first, falls back to Gemini if OpenAI fails.
-    Returns: model text (JSON string)
-    """
-    openai_key = os.getenv("OPENAI_API_KEY")
-    gemini_key = os.getenv("GEMINI_API_KEY")
 
-    openai_err: Optional[Exception] = None
+    user_prompt = f"User question:\n{question}"
 
-    user_message = f"User question:\n{question}\n"
-
-    # # ---------------- 1) OpenAI ----------------
-    # if openai_key:
-    #     try:
-    #         client = OpenAI(api_key=openai_key)
-
-    #         resp = client.responses.create(
-    #             model=OPENAI_ROUTER_MODEL,
-    #             input=[
-    #                 {"role": "system", "content": SYSTEM_MESSAGE},
-    #                 {"role": "user", "content": user_message},
-    #             ],
-    #             temperature=0.0,
-    #         )
-
-    #         return resp.output_text.strip()
-
-    #     except (RateLimitError, APIError, APITimeoutError, APIConnectionError) as e:
-    #         openai_err = e
-    #     except Exception as e:
-    #         openai_err = e
-
-    # ---------------- 2) Gemini fallback ----------------
-    if gemini_key:
+    # 1️⃣ Try local first
+    if LOCAL_LLM_ENABLED:
         try:
-            gclient = genai.Client(api_key=gemini_key)
+            print("🟢 Using LOCAL Ollama router")
+            return call_ollama(user_prompt)
+        except Exception:
+            if not GEMINI_ENABLED:
+                raise RuntimeError("Local LLM failed and Gemini disabled.")
 
-            resp = gclient.models.generate_content(
-                model=GEMINI_ROUTER_MODEL,
-                contents=SYSTEM_MESSAGE + "\n\n" + user_message,
-            )
+    # 2️⃣ Fallback to Gemini (if allowed)
+    if GEMINI_ENABLED:
+        print("🟡 Using Gemini fallback")
+        return call_gemini(user_prompt)
 
-            return (resp.text or "").strip()
-
-        except Exception as ge:
-            if openai_err:
-                raise RuntimeError(
-                    "Both OpenAI and Gemini router calls failed.\n"
-                    f"OpenAI error: {openai_err}\n"
-                    f"Gemini error: {ge}"
-                )
-            raise RuntimeError(f"Gemini router call failed: {ge}")
-
-    # ---------------- No keys ----------------
-    raise RuntimeError("No API keys set. Please set OPENAI_API_KEY and/or GEMINI_API_KEY.")
+    # 3️⃣ Nothing available
+    raise RuntimeError("No LLM available (local disabled and Gemini disabled).")
