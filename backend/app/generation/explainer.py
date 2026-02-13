@@ -25,13 +25,8 @@ def generate(context_chunks: List[dict], question: str) -> str:
         c for c in context_chunks
         if c.get("speaker") == "Meher Baba" and c.get("text")
     ]
-
-    if not baba_quotes:
-        return (
-            "Meher Baba has not spoken directly on this question "
-            "in the available authoritative texts."
-        )
-
+    # print(f"🔍 Found {len(baba_quotes)} relevant Baba quotes in context.")
+    
     # --------------------------------------------------
     # 2️⃣ Build Context
     # --------------------------------------------------
@@ -41,7 +36,7 @@ def generate(context_chunks: List[dict], question: str) -> str:
         f"TEXT:\n{c.get('text')}"
         for c in baba_quotes[:6]
     )
-
+    print(context_text)
     prompt = f"""
 You are NOT allowed to invent explanations.
 
@@ -106,7 +101,7 @@ USER QUESTION:
     # --------------------------------------------------
     # 4️⃣ GEMINI FALLBACK (OPTIONAL)
     # --------------------------------------------------
-    if GEMINI_ENABLED:
+    else:
         try:
             print("🟡 Using Gemini fallback")
 

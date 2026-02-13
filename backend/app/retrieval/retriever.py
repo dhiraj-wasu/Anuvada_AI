@@ -30,6 +30,10 @@ BOOK_COLLECTION_MAP = {
 # =================================================
 
 def keyword_fallback(book: str, query: str, limit: int = 5) -> List[dict]:
+    """
+    Simple fallback retrieval using raw keyword matching.
+    Used only if vector search fails.
+    """
 
     collection = BOOK_COLLECTION_MAP.get(book)
     if not collection:
@@ -55,7 +59,7 @@ def keyword_fallback(book: str, query: str, limit: int = 5) -> List[dict]:
 
 
 # =================================================
-# MAIN RETRIEVER (HYBRID READY)
+# MAIN HYBRID RETRIEVER
 # =================================================
 
 def retrieve(
@@ -63,7 +67,7 @@ def retrieve(
     query: str,
     router_topics: Optional[List[str]] = None,
     router_keywords: Optional[List[str]] = None,
-    top_k: int = 6,
+    top_k: int = 2,
     threshold: float = 0.2
 ) -> List[dict]:
 
@@ -73,6 +77,10 @@ def retrieve(
 
     router_topics = router_topics or []
     router_keywords = router_keywords or []
+
+    # --------------------------------------------------
+    # 1️⃣ QUERY ENRICHMENT
+    # --------------------------------------------------
 
     enhanced_query = query
 
@@ -88,6 +96,7 @@ def retrieve(
     print("\n🔎 Enhanced Query Used For Embedding:")
     print(enhanced_query)
 
+    # Generate embedding
     vector = embed(enhanced_query)
 
     try:
@@ -107,34 +116,63 @@ def retrieve(
 
         for r in results:
             payload = r.payload or {}
-            score = 0.6 * r.score
+
+            # -------------------------
+            # 2️⃣ BASE VECTOR SCORE
+            # -------------------------
+            vector_score = r.score
+
+            # -------------------------
+            # 3️⃣ METADATA BOOSTING
+            # -------------------------
+            topic_boost = 0.0
+            keyword_boost = 0.0
+            speaker_boost = 0.0
 
             payload_topic = payload.get("topic", "").lower()
-
-            for topic in router_topics:
-                if topic.lower() in payload_topic:
-                    score += 0.25
-
             text = payload.get("text", "").lower()
 
+            # Topic boost (small)
+            for topic in router_topics:
+                if topic.lower() in payload_topic:
+                    topic_boost = 0.10
+
+            # Keyword boost (very small per match)
             for keyword in router_keywords:
                 if keyword.lower() in text:
-                    score += 0.15
+                    keyword_boost += 0.05
 
+            # Cap keyword boost (prevents domination)
+            keyword_boost = min(keyword_boost, 0.15)
+
+            # Speaker boost (tiny)
             if payload.get("speaker") == "Meher Baba":
-                score += 0.1
+                speaker_boost = 0.05
 
-            # 🔥 DEBUG PRINT
+            # -------------------------
+            # 4️⃣ FINAL HYBRID SCORE
+            # -------------------------
+            final_score = (
+                0.8 * vector_score
+                + topic_boost
+                + keyword_boost
+                + speaker_boost
+            )
+
+            # Debug print
             print("--------------------------------------------------")
-            print("Vector Score:", round(r.score, 4))
-            print("Final Score:", round(score, 4))
+            print("Vector Score:", round(vector_score, 4))
+            print("Topic Boost:", topic_boost)
+            print("Keyword Boost:", keyword_boost)
+            print("Speaker Boost:", speaker_boost)
+            print("Final Score:", round(final_score, 4))
             print("Chunk ID:", payload.get("chunk_id"))
-            print("Topic:", payload.get("topic"))
             print("Preview:", payload.get("text", "")[:200], "...")
             print("--------------------------------------------------\n")
 
-            ranked.append((score, payload))
+            ranked.append((final_score, payload))
 
+        # Sort by final score
         ranked.sort(key=lambda x: x[0], reverse=True)
 
         print("\n🏆 FINAL TOP RANKED CHUNKS:")

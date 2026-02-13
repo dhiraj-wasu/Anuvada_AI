@@ -41,7 +41,7 @@ def ask_question(question: str):
         query=question,
         router_topics=topics,
         router_keywords=keywords,
-        top_k=6
+        top_k=2
     )
     
     if not chunks:

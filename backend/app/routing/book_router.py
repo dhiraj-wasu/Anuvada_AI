@@ -182,7 +182,7 @@ def call_ollama(user_prompt: str) -> str:
     r = requests.post(
         "http://localhost:11434/api/chat",
         json=payload,
-        timeout=60
+        timeout=180
     )
 
     r.raise_for_status()
